@@ -85,7 +85,7 @@ Return JSON with fields:
 - "targetLanguage": "${targetLanguage}"
 - "segments": Array of objects [{ "id": 1, "startSeconds": 0, "endSeconds": 4, "startTime": "00:00", "endTime": "00:04", "originalText": "...", "translatedText": "..." }]`;
 
-    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
     const payload = {
       contents: [
