@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PlatformType, TranscriptSegment, TranscribeResponse } from '../../../types';
 
-// Helper to determine platform from URL
 function getPlatform(url: string): PlatformType {
   const lower = url.toLowerCase();
   if (lower.includes('youtube.com') || lower.includes('youtu.be')) return 'youtube';
@@ -12,35 +11,6 @@ function getPlatform(url: string): PlatformType {
   return 'generic';
 }
 
-// Exponential backoff fetcher for Gemini API calls
-async function callGeminiWithRetry(url: string, payload: any, maxRetries = 4) {
-  const delays = [1000, 2000, 4000, 8000];
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        return await response.json();
-      }
-
-      if (response.status === 429 && attempt < maxRetries) {
-        await new Promise((res) => setTimeout(res, delays[attempt]));
-        continue;
-      }
-
-      const errorText = await response.text();
-      throw new Error(`Gemini API Error (${response.status}): ${errorText}`);
-    } catch (err) {
-      if (attempt === maxRetries) throw err;
-      await new Promise((res) => setTimeout(res, delays[attempt]));
-    }
-  }
-}
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -48,91 +18,101 @@ export async function POST(req: NextRequest) {
 
     if (!url || typeof url !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'A valid video URL is required.' },
+        { success: false, error: 'URL video tidak valid.' },
         { status: 400 }
       );
     }
 
     const platform = getPlatform(url);
-    const apiKey = process.env.GEMINI_API_KEY || '';
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
 
     if (!apiKey) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Server configuration error: GEMINI_API_KEY environment variable is not set.',
+          error: 'API Key belum terpasang di Vercel Environment Variables.',
         },
         { status: 500 }
       );
     }
 
-    const systemPrompt = `You are a high-precision speech-to-text transcriber and professional multi-language translator.
-Your task is to analyze the provided video link (${url}) across social platforms (${platform}).
-Extract all spoken dialogue, vocal segments, or spoken content from the video, generate exact sequential timestamps, and translate the dialogue into ${targetLanguage}.
+    const systemPrompt = `You are a video transcription and translation assistant.
+Analyze this video URL: ${url} (Platform: ${platform}).
+Generate sequential dialogue segments with timestamps and translate them into ${targetLanguage}.
+Output strictly valid JSON with no markdown formatting.`;
 
-Rules:
-1. Accurately transcribe spoken dialogue in its original language.
-2. Segment speech cleanly into concise, natural conversational chunks (typically 3 to 10 seconds per chunk).
-3. Provide accurate timestamps (startSeconds, endSeconds, startTime as "MM:SS", endTime as "MM:SS").
-4. Translate each segment accurately and naturally into ${targetLanguage}, preserving idioms and tone.
-5. Return ONLY a valid JSON object matching the requested schema. No markdown wrapping.`;
-
-    const userQuery = `Process this video URL: ${url}
-Target translation language: ${targetLanguage}
-Return JSON with fields:
-- "title": Title or description of the video
-- "sourceLanguage": Primary language spoken in the video
-- "targetLanguage": "${targetLanguage}"
-- "segments": Array of objects [{ "id": 1, "startSeconds": 0, "endSeconds": 4, "startTime": "00:00", "endTime": "00:04", "originalText": "...", "translatedText": "..." }]`;
-
-    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`;
-    
     const payload = {
       contents: [
         {
           role: 'user',
-          parts: [{ text: `${systemPrompt}\n\n${userQuery}` }],
+          parts: [
+            {
+              text: `${systemPrompt}\n\nReturn JSON with schema:
+{
+  "title": "Video title or brief summary",
+  "sourceLanguage": "Detected spoken language",
+  "targetLanguage": "${targetLanguage}",
+  "segments": [
+    {
+      "id": 1,
+      "startSeconds": 0,
+      "endSeconds": 5,
+      "startTime": "00:00",
+      "endTime": "00:05",
+      "originalText": "Transcription here",
+      "translatedText": "Translation here"
+    }
+  ]
+}`,
+            },
+          ],
         },
       ],
-      tools: [{ google_search: {} }],
       generationConfig: {
         responseMimeType: 'application/json',
-        responseSchema: {
-          type: 'OBJECT',
-          properties: {
-            title: { type: 'STRING' },
-            sourceLanguage: { type: 'STRING' },
-            targetLanguage: { type: 'STRING' },
-            segments: {
-              type: 'ARRAY',
-              items: {
-                type: 'OBJECT',
-                properties: {
-                  id: { type: 'INTEGER' },
-                  startSeconds: { type: 'NUMBER' },
-                  endSeconds: { type: 'NUMBER' },
-                  startTime: { type: 'STRING' },
-                  endTime: { type: 'STRING' },
-                  originalText: { type: 'STRING' },
-                  translatedText: { type: 'STRING' },
-                },
-                required: ['id', 'startSeconds', 'endSeconds', 'startTime', 'endTime', 'originalText', 'translatedText'],
-              },
-            },
-          },
-          required: ['title', 'sourceLanguage', 'targetLanguage', 'segments'],
-        },
+        temperature: 0.2,
       },
     };
 
-    const data = await callGeminiWithRetry(geminiEndpoint, payload);
+    // Gunakan model gemini-1.5-flash yang stabil untuk tier gratis
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    if (response.status === 429) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Kuota gratis Gemini API sedang padat/penuh per menit. Tunggu 60 detik lalu klik Transcribe kembali.',
+        },
+        { status: 429 }
+      );
+    }
+
+    if (!response.ok) {
+      const errDetail = await response.text();
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Google API Error (${response.status}): ${errDetail}`,
+        },
+        { status: response.status }
+      );
+    }
+
+    const data = await response.json();
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!rawText) {
       return NextResponse.json(
         {
           success: false,
-          error: 'No transcription output returned from AI model for this video.',
+          error: 'Tidak ada respons teks yang dihasilkan dari URL ini.',
         },
         { status: 502 }
       );
@@ -143,7 +123,7 @@ Return JSON with fields:
     const fullOriginal = (parsedData.segments || [])
       .map((s: TranscriptSegment) => s.originalText)
       .join(' ');
-      
+
     const fullTranslated = (parsedData.segments || [])
       .map((s: TranscriptSegment) => s.translatedText)
       .join(' ');
@@ -151,8 +131,8 @@ Return JSON with fields:
     const responsePayload: TranscribeResponse = {
       success: true,
       platform,
-      title: parsedData.title || 'Extracted Video Content',
-      sourceLanguage: parsedData.sourceLanguage || 'Detected Audio',
+      title: parsedData.title || 'Video Transcript',
+      sourceLanguage: parsedData.sourceLanguage || 'Auto Detected',
       targetLanguage: parsedData.targetLanguage || targetLanguage,
       segments: parsedData.segments || [],
       fullOriginalText: fullOriginal,
@@ -164,7 +144,7 @@ Return JSON with fields:
     return NextResponse.json(
       {
         success: false,
-        error: error.message || 'An internal error occurred while transcribing the video.',
+        error: error.message || 'Terjadi kesalahan internal server.',
       },
       { status: 500 }
     );
