@@ -20,7 +20,7 @@ import {
   ArrowRight,
   ClipboardPaste
 } from 'lucide-react';
-import { PlatformType, TranscribeResponse, SupportedLanguage } from '@/types';
+import { PlatformType, TranscribeResponse, SupportedLanguage } from '../types';
 
 const SUPPORTED_LANGUAGES: SupportedLanguage[] = [
   { code: 'Indonesian', name: 'Indonesian', nativeName: 'Bahasa Indonesia' },
