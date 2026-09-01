@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PlatformType, TranscriptSegment, TranscribeResponse } from '@/types';
+import { PlatformType, TranscriptSegment, TranscribeResponse } from '../../../types';
 
 // Helper to determine platform from URL
 function getPlatform(url: string): PlatformType {
